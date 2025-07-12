@@ -120,14 +120,22 @@ class MobileActivationService:
         response = self.send_command('CreateTunnel1SessionInfoRequest')
         error = response.get('Error')
         if error is not None:
-            raise MobileActivationException(f'Mobile activation can not be done due to: {response}')
+            error_message = f'Mobile activation can not be done due to: {error.get("NSLocalizedDescription", error)}'
+            underlying_error = error.get('NSUnderlyingError', {})
+            if underlying_error:
+                error_message += f' Underlying error: {underlying_error.get("NSLocalizedDescription", underlying_error)}'
+            raise MobileActivationException(error_message)
         return response['Value']
 
     def create_activation_info_with_session(self, handshake_response):
         response = self.send_command('CreateTunnel1ActivationInfoRequest', handshake_response)
         error = response.get('Error')
         if error is not None:
-            raise MobileActivationException(f'Mobile activation can not be done due to: {response}')
+            error_message = f'Mobile activation can not be done due to: {error.get("NSLocalizedDescription", error)}'
+            underlying_error = error.get('NSUnderlyingError', {})
+            if underlying_error:
+                error_message += f' Underlying error: {underlying_error.get("NSLocalizedDescription", underlying_error)}'
+            raise MobileActivationException(error_message)
         return response['Value']
 
     def activate_with_session(self, activation_record, headers):
