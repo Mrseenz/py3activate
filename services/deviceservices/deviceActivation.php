@@ -64,12 +64,13 @@ if ($is_icloud_login_attempt) {
 $device_record = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$device_record && !$is_icloud_login_attempt) {
+    $device_info = parse_plist_for_device_info($post_data);
     $stmt = $pdo->prepare(
         "INSERT INTO devices (udid, serial_number, product_type, imei) VALUES (?, ?, ?, ?)"
     );
-    $stmt->execute([$udid, $serial_number, $device_info['product_type'], $device_info['imei']]);
+    $stmt->execute([$device_info['udid'], $device_info['serial_number'], $device_info['product_type'], $device_info['imei']]);
     $stmt = $pdo->prepare("SELECT * FROM devices WHERE udid = ?");
-    $stmt->execute([$udid]);
+    $stmt->execute([$device_info['udid']]);
     $device_record = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
@@ -81,7 +82,7 @@ $can_activate = false;
 if ($is_locked) {
     if ($is_icloud_login_attempt) {
         if ($_POST['apple_id'] === $device_record['apple_id'] && $_POST['password'] === $device_record['password']) {
-            $can_activate = true; // Credentials correct
+            $can_activate = true;
         } else {
             generate_icloud_form($device_record, "Incorrect Apple ID or password.");
             exit();
@@ -91,14 +92,28 @@ if ($is_locked) {
         exit();
     }
 } else {
-    // Not locked, can activate
     $can_activate = true;
 }
 
 // --- Final Activation ---
 
 if ($can_activate) {
-    $activation_record_plist = generate_activation_record($device_record);
+    // Call the Python script to generate the dynamic activation record
+    $udid = escapeshellarg($device_record['udid']);
+    $serial = escapeshellarg($device_record['serial_number']);
+    $imei = escapeshellarg($device_record['imei']);
+    $product_type = escapeshellarg($device_record['product_type']);
+
+    // IMPORTANT: Assumes python3 is in the PATH and the generator script is in the parent directory.
+    // You may need to adjust the path to activation_record_generator.py
+    $command = "python3 ../../activation_record_generator.py $udid $serial $imei $product_type";
+    $activation_record_plist = shell_exec($command);
+
+    if (empty($activation_record_plist)) {
+        http_response_code(500);
+        header('Content-Type: text/plain');
+        die("Failed to generate activation record from Python script.");
+    }
 
     // Update database
     $stmt = $pdo->prepare("UPDATE devices SET activation_state = 'Activated', activation_record = ? WHERE id = ?");
@@ -114,7 +129,7 @@ if ($can_activate) {
 
 function generate_icloud_form($device, $error_message = null) {
     header('Content-Type: application/x-buddyml');
-    $description = "This {$device['product_type']} is linked to an Apple ID. Enter the Apple ID and password that were used to set up this device.";
+    $description = "This device is linked to an Apple ID. Enter the Apple ID and password that were used to set up this device.";
     if ($error_message) {
         $description = "<p color='red'>{$error_message}</p>" . $description;
     }
@@ -145,24 +160,6 @@ function generate_icloud_form($device, $error_message = null) {
 </plist>
 XML;
     echo $xml;
-}
-
-function generate_activation_record($device) {
-    // These would be dynamically generated in a real scenario
-    $account_token_cert = base64_encode(random_bytes(512));
-    $device_cert = base64_encode(random_bytes(512));
-    $account_token = base64_encode(random_bytes(256));
-    $account_token_signature = base64_encode(random_bytes(128));
-
-    return '<?xml version="1.0" encoding="UTF-8"?>' . "\n" .
-    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' . "\n" .
-    '<plist version="1.0"><dict><key>ActivationRecord</key><dict>' .
-    '<key>unbrick</key><true/>' .
-    '<key>AccountTokenCertificate</key><data>' . $account_token_cert . '</data>' .
-    '<key>DeviceCertificate</key><data>' . $device_cert . '</data>' .
-    '<key>AccountToken</key><data>' . $account_token . '</data>' .
-    '<key>AccountTokenSignature</key><data>' . $account_token_signature . '</data>' .
-    '</dict></dict></plist>';
 }
 
 // Close the database connection
